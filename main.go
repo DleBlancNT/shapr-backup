@@ -1,0 +1,178 @@
+package main
+
+import (
+	"archive/zip"
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/alecthomas/kong"
+	"github.com/joho/godotenv"
+
+	_ "modernc.org/sqlite"
+)
+
+type Globals struct {
+	ProjectRoot string `env:"PROJECT_ROOT" type:"" default:"$LOCALAPPDATA\\Packages\\Shapr3D.Shapr3D_dvv5p1vgwv6mp"`
+}
+
+var global Globals
+
+type ShaprMetadata struct {
+	RemoteID         string `json:"remoteID"`
+	RevisionID       int    `json:"revisionID"`
+	LocalChangeCount int    `json:"localChangeCount"`
+}
+
+func init() {
+	godotenv.Load()
+	kong.Parse(&global)
+}
+
+func JSON(v any) string {
+	b, _ := json.MarshalIndent(v, ``, `  `)
+	return string(b)
+}
+
+func sanitize(name string) string {
+	var out string
+
+	for _, c := range name {
+		switch c {
+		case '/', '\\', ':':
+			c = '_'
+		}
+		out += string(c)
+	}
+
+	return out
+}
+
+func mkzipname(name, folder string, index int) string {
+	folder = sanitize(folder)
+	name = sanitize(name)
+	if folder != `` {
+		folder += `_`
+	}
+	if index > 0 {
+		return fmt.Sprintf("%s%s (%d).shapr", folder, name, index)
+	} else {
+		return fmt.Sprintf("%s%s.shapr", folder, name)
+	}
+}
+
+func main() {
+
+	var projects []os.DirEntry
+	var err error
+
+	dir := os.ExpandEnv(global.ProjectRoot)
+
+	datadb := filepath.Join(dir, `LocalState`, `storage`, `projectStorage.db`)
+
+	var sqldb *sql.DB
+
+	if sqldb, err = sql.Open("sqlite", datadb); err != nil {
+		panic(err)
+	}
+
+	project_dir := filepath.Join(dir, `LocalState`, `projects`)
+
+	if projects, err = os.ReadDir(project_dir); err != nil {
+		panic(err)
+	}
+
+	for e := range projects {
+		var rows *sql.Rows
+
+		name := projects[e].Name()
+		workspace := filepath.Join(project_dir, name, `project`, `workspace`)
+
+		if _, err = os.Stat(workspace); err != nil {
+			continue
+		}
+
+		if rows, err = sqldb.Query(`select ifnull(title,projectid),ifnull(folderpath,""),ifnull(revisionid,0) from projects where projectid=?`, name); err != nil {
+			panic(err)
+		}
+
+		for rows.Next() {
+			var title, folder, zipname string
+			var revisionid int
+
+			if err = rows.Scan(&title, &folder, &revisionid); err != nil {
+				fmt.Printf("Failed for projectID = %s\n", name)
+				panic(err)
+			}
+
+			index := 0
+			zipname = mkzipname(title, folder, index)
+
+			if title != `` {
+
+				for {
+					if _, err := os.Stat(zipname); err != nil {
+						break
+					} else {
+						fmt.Printf("%s exists.\n", zipname)
+						index++
+						zipname = mkzipname(title, folder, index)
+					}
+				}
+				fmt.Printf("Exporting %s\n", zipname)
+
+				var infile, zipfile *os.File
+				var w io.Writer
+				if zipfile, err = os.Create(zipname); err != nil {
+					panic(err)
+				}
+				zipw := zip.NewWriter(zipfile)
+
+				// Empty file
+				if w, err = zipw.Create(".export_log"); err != nil {
+					panic(err)
+				}
+
+				// Metadata file
+				metadata := ShaprMetadata{
+					RemoteID:         name,
+					RevisionID:       revisionid,
+					LocalChangeCount: 0,
+				}
+
+				if w, err = zipw.Create(".metadata"); err != nil {
+					panic(err)
+				}
+
+				buf, _ := json.Marshal(&metadata)
+				if _, err = io.Copy(w, bytes.NewReader(buf)); err != nil {
+					panic(err)
+				}
+
+				if infile, err = os.Open(workspace); err != nil {
+					panic(err)
+				}
+
+				// Workspace File
+				if w, err = zipw.Create(`workspace`); err != nil {
+					panic(err)
+				}
+
+				if _, err = io.Copy(w, infile); err != nil {
+					panic(err)
+				}
+
+				infile.Close()
+				zipw.Close()
+			}
+
+		}
+		rows.Close()
+	}
+
+	_ = datadb
+}
