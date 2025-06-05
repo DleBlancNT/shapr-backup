@@ -18,6 +18,9 @@ import (
 
 type Globals struct {
 	ProjectRoot string `env:"PROJECT_ROOT" type:"" default:"$LOCALAPPDATA\\Packages\\Shapr3D.Shapr3D_dvv5p1vgwv6mp"`
+	Target      string `env:"EXPORT_DIR" short:"d" help:"Export directory." default:"."`
+	AddRevision bool   `short:"r" help:"Add revision ID to filename."`
+	AddDirs     bool   `short:"s" help:"Make folders for export."`
 }
 
 var global Globals
@@ -52,17 +55,23 @@ func sanitize(name string) string {
 	return out
 }
 
-func mkzipname(name, folder string, index int) string {
+func mkzipname(project, folder string, rev int, index int) string {
+	var name string
 	folder = sanitize(folder)
-	name = sanitize(name)
-	if folder != `` {
+	project = sanitize(project)
+	if global.AddDirs && folder != `` {
+		folder += string(os.PathSeparator)
+	} else if folder != `` {
 		folder += `_`
 	}
-	if index > 0 {
-		return fmt.Sprintf("%s%s (%d).shapr", folder, name, index)
-	} else {
-		return fmt.Sprintf("%s%s.shapr", folder, name)
+	name = fmt.Sprintf("%s%s", folder, project)
+	if global.AddRevision && rev > 0 {
+		name += fmt.Sprintf(" [rev-%d]", rev)
 	}
+	if index > 0 {
+		name += fmt.Sprintf(" (%d)", index)
+	}
+	return filepath.Join(global.Target, name+`.shapr`)
 }
 
 func main() {
@@ -110,7 +119,7 @@ func main() {
 			}
 
 			index := 0
-			zipname = mkzipname(title, folder, index)
+			zipname = mkzipname(title, folder, revisionid, index)
 
 			if title != `` {
 
@@ -120,13 +129,16 @@ func main() {
 					} else {
 						fmt.Printf("%s exists.\n", zipname)
 						index++
-						zipname = mkzipname(title, folder, index)
+						zipname = mkzipname(title, folder, revisionid, index)
 					}
 				}
 				fmt.Printf("Exporting %s\n", zipname)
 
 				var infile, zipfile *os.File
 				var w io.Writer
+				if global.AddDirs && folder != `` {
+					os.MkdirAll(folder, 0755)
+				}
 				if zipfile, err = os.Create(zipname); err != nil {
 					panic(err)
 				}
