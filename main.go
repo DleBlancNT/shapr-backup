@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/joho/godotenv"
@@ -17,10 +18,11 @@ import (
 )
 
 type Globals struct {
-	ProjectRoot string `env:"PROJECT_ROOT" type:"" default:"$LOCALAPPDATA\\Packages\\Shapr3D.Shapr3D_dvv5p1vgwv6mp"`
-	Target      string `env:"EXPORT_DIR" short:"d" help:"Export directory." default:"."`
-	AddRevision bool   `short:"r" help:"Add revision ID to filename."`
-	AddDirs     bool   `short:"s" help:"Make folders for export."`
+	ProjectRoot string   `env:"PROJECT_ROOT" type:"" default:"$LOCALAPPDATA\\Packages\\Shapr3D.Shapr3D_dvv5p1vgwv6mp"`
+	Target      string   `env:"EXPORT_DIR" short:"d" help:"Export directory." default:"."`
+	AddRevision bool     `short:"r" help:"Add revision ID to filename."`
+	AddDirs     bool     `short:"s" help:"Make folders for export."`
+	Apps        []string `arg:"1" optional:"1" help:"Drawings..."`
 }
 
 var global Globals
@@ -122,6 +124,16 @@ func main() {
 			zipname = mkzipname(title, folder, revisionid, index)
 
 			if title != `` {
+
+				match := len(global.Apps) == 0
+				for _, wildcard := range global.Apps {
+					if match, _ = filepath.Match(strings.ToLower(wildcard), strings.ToLower(title)); match {
+						break
+					}
+				}
+				if !match {
+					continue
+				}
 
 				for {
 					if _, err := os.Stat(zipname); err != nil {
